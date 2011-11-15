@@ -1,19 +1,19 @@
 #!/usr/bin/env newlisp
 # A simple newLisp backup script for encrypted AWS S3 storage.
 # Uses an XML-based configuration for output/behavior customization and GnuPG for encryption.
-# For info on the available configuration options please see the documentation in `config.xml`.
+# For info on the available configuration options please see the documentation in `demo-config.xml`.
 # 
 # usage:
-#      ./s3back path-to-config-file directories
+#      ./armadillo path-to-config-file directories
 # directories is a space separated list of absolute or relative directories and/or files to backup.
 #
 # example
-#      ./s3back /tmp/config.xml /top/secret/dir /not/so/secret.txt
+#      ./armadillo /tmp/config.xml /top/secret/dir /not/so/secret.txt
 # will use the parameters from `/tmp/config.xml` to archive the directory /top/secret/dir and the file /not/so/secret.txt
 # encrypt it and finally upload it to AWS S3.
 #
 
-# Note: I used newLisp contexts abundantly to make the script more readable for non-lispers
+# Note: I used newLisp contexts abundantly to make the script (more?) readable for non-lispers
 
 (set 'start-time (time-of-day))
 (module "crypto.lsp")
@@ -22,7 +22,7 @@
 # parse and store args
 (if (< (length (main-args)) 4)
     (begin
-     (println "Usage: ./s3back path-to-config-file directories")
+     (println "Usage: ./armadillo path-to-config-file directories")
      (exit 1)))
 
 (set 'config-file-path ((main-args) 2))
