@@ -1,0 +1,35 @@
+<archive>
+  <!-- the method used to create the unencrypted archived -->
+  <!-- CHOICES: zip | tgz | 7z -->
+  <extension>tgz</extension>
+  <!-- the informative name for your archive file, this is the actual file name, NOT the path -->
+  <!-- the archive created is named 'name-timestamp.extension' -->
+  <name>my-backup</name>
+  <!-- the local backup directory -->
+  <backup-dir>/tmp/</backup-dir>
+  <!-- the timestamp format string: see http://www.newlisp.org/downloads/newlisp_manual.html#date for details -->
+  <timestamp-format>%d%m%y-%H%M</timestamp-format>
+  <!-- OPTIONAL uncomment the line below to delete the archive after running the script -->
+  <!-- <cleanup>you can type what ever you want in here</cleanup> -->
+</archive>
+<aws>
+  <!-- your AWS secret key -->
+  <secret>mySuperSecretSecret</secret>
+  <!-- the name of the bucket to store the backups in -->
+  <bucket>myBucket</bucket>
+  <!-- your AWS shared key -->
+  <key>myShareKey</key>
+</aws>
+<!-- configuration of the encryption process -->
+<!-- the default call to gpg is `gpg -o OUTPUT -sign INPUT` you can modify this by adding content to the elements -->
+<gpg>
+  <!-- non empty content is added using the -r option -->
+  <recipient>theRecipient</recipient>
+  <!-- non empty content is added using the -u option -->
+  <user-id>theUser</user-id>
+  <!-- the encryption method gpg should use --> 
+  <!-- CHOICES = sign | encrypt -->
+  <method>sign</method>
+  <!-- OPTIONAL uncomment the line below to delete the encrypted archive after running the script -->
+  <!-- <cleanup>you can type what ever you want in here</cleanup> -->
+</gpg>

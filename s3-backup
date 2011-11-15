@@ -1,0 +1,178 @@
+#!/usr/bin/env newlisp
+# A simple newLisp backup script for encrypted AWS S3 storage.
+# Uses an XML-based configuration for output/behavior customization and GnuPG for encryption.
+# For info on the available configuration options please see the documentation in `config.xml`.
+# 
+# usage:
+#      ./s3back path-to-config-file directories
+# directories is a space separated list of absolute or relative directories and/or files to backup.
+#
+# example
+#      ./s3back /tmp/config.xml /top/secret/dir /not/so/secret.txt
+# will use the parameters from `/tmp/config.xml` to archive the directory /top/secret/dir and the file /not/so/secret.txt
+# encrypt it and finally upload it to AWS S3.
+#
+
+# Note: I used newLisp contexts abundantly to make the script more readable for non-lispers
+
+(set 'start-time (time-of-day))
+(module "crypto.lsp")
+
+(context 'INPUT)
+# parse and store args
+(if (< (length (main-args)) 4)
+    (begin
+     (println "Usage: ./s3back path-to-config-file directories")
+     (exit 1)))
+
+(set 'config-file-path ((main-args) 2))
+(set 'directories (join (3 (main-args)) " "))
+
+# define a couple of utility functions
+(context 'MAIN:UTILS)
+(define (grab-value tag element (position -1))
+    (let (contents (assoc tag element))
+      (if (= nil contents)
+	  (throw-error (join (list "config error: tag" (string tag) "in element" (string element) "missing or empty.") " "))
+	  (contents position))))
+(define (make-joinable-dir-path dir)
+    (if (ends-with dir "/")
+	dir
+	(append dir "/")))
+(define (get-optional-value tag element (position -1))
+    (let (contents (assoc tag element))
+      (if-not (or (= nil contents) (= 1 (length contents)))
+	      (contents position)
+	      nil)))
+
+(context 'MAIN:CONFIG)
+# ignore any xml specific output
+(xml-type-tags nil nil nil nil)
+# parse the xml configuration
+(set 'config (xml-parse (read-file INPUT:config-file-path) (+ 1 2 4 8)))
+
+# parse archive settings
+(set 'archive (assoc 'archive config))
+(set 'name (UTILS:grab-value 'name archive))
+(set 'extension (UTILS:grab-value 'extension archive))
+(set 'timestamp-format (UTILS:grab-value 'timestamp-format archive))
+(set 'filename (append name (date (date-value) 0 timestamp-format) "." extension))
+(set 'backup-dir (UTILS:make-joinable-dir-path (UTILS:grab-value 'backup-dir archive)))
+(set 'remove-archive (UTILS:get-optional-value 'cleanup archive))
+(set 'archive-path (append backup-dir filename))
+
+# parse AWS related data
+(set 'aws-data (assoc 'aws config))
+(set 'secret (UTILS:grab-value 'secret aws-data))
+(set 'bucket (UTILS:grab-value 'bucket aws-data))
+(set 'key (UTILS:grab-value 'key aws-data))
+
+# parse GPG related data
+(set 'gpg (assoc 'gpg config))
+(set 'gpg-output (append archive-path ".sig"))
+(set 'recipient (UTILS:get-optional-value 'recipient gpg))
+(set 'user-id (UTILS:get-optional-value 'user-id gpg))
+(set 'upload-filename (append filename ".sig"))
+(set 'encryption-method (UTILS:grab-value 'method gpg))
+(set 'remove-encrypted-file (UTILS:get-optional-value 'cleanup gpg))
+(if-not (or (= encryption-method "sign") (= encryption-method "encrypt"))
+	(begin
+	 (println "Please check the configuration file, you have specified an invalid encryption method for gpg")
+	 (exit 1))
+	(set 'encryption-method (append "--" encryption-method)))
+
+(context 'MAIN)
+# TODO: implement zip and 7z 
+(cond ((= CONFIG:extension "zip")
+       (begin
+	(println "zip not yet implemented.")
+	(exit 1)))
+      ((= CONFIG:extension "7z")
+       (begin
+	(println "7z not yet implemented.")
+	(exit 1)))
+      (true (set 'archive-cmd "tar zcf")))
+
+# create the archive
+# TODO: there has to be a more elegant way of checking status codes after exec...
+(set 'exit-code (exec (join (list archive-cmd CONFIG:archive-path INPUT:directories "&& echo $?") " ")))
+(if-not (= (exit-code 0) "0")
+	(begin
+	 (println (append archive-cmd " failed, exit code = " (string (exit-code 0))))
+	 (exit 1)))
+
+# encrypt/sign the archive
+(set 'exit-code 
+     (exec 
+      (join 
+       (list 
+	"gpg -o" 
+	CONFIG:gpg-output 
+	(if CONFIG:recipient (append "-r " CONFIG:recipient) "") 
+	(if CONFIG:user-id (append "-u " CONFIG:user-id) "") 
+	CONFIG:encryption-method 
+	CONFIG:archive-path 
+	"&& echo $?") 
+       " ")))
+(if-not (= (exit-code 0) "0")
+	(begin	
+	 (println (append "gpg failed, exit code = " (string (exit-code 0))))
+	 (exit 1)))
+
+# request preamble
+(set 'host (append "http://" CONFIG:bucket ".s3.amazonaws.com/" CONFIG:upload-filename))
+(set 'body-hash (exec (append "md5 -q " CONFIG:archive-path)))
+(set 'header-date (date (date-value) 0 "%a, %d %b %Y %H:%M:%S %z"))
+# create the request header components
+# creating the AWS Authorization Header
+(set 'string2sign 
+     (join 
+      (list 
+       "PUT\n\n\n" 
+       header-date 
+       "\n/" 
+       CONFIG:bucket 
+       "/" 
+       CONFIG:upload-filename) 
+      ""))
+(set 'the-hash 
+     (base64-enc 
+      (crypto:hmac crypto:sha1 string2sign CONFIG:secret)))
+(set 'date-header (append "Date: " header-date))
+(set 'file-size (file-info CONFIG:gpg-output 0))
+(set 'content-length (append "Content-Length: " (string file-size)))
+(set 'authorization (append "Authorization: AWS " CONFIG:key ":" the-hash))
+(set 'custom-headers 
+     (join 
+      (list 
+       date-header 
+       content-length 
+       authorization 
+       "") 
+      "\r\n"))
+
+# send the put request
+(set 'the-reply 
+     (put-url 
+      host 
+      (read-file CONFIG:gpg-output) 
+      5000 
+      custom-headers))
+
+# clean up: possibly remove tarball and/or encrypted file
+(if CONFIG:remove-encrypted-file (delete-file CONFIG:gpg-output))
+(if CONFIG:remove-archive (delete-file CONFIG:archive-path))
+
+# print some useful info 
+(set 'time-taken (- (time-of-day) start-time))
+# newlisp raises an exception on empty request body, but that just means we got an empty 202 response from AWS, which means everything went fine
+(if (= "ERR: HTTP document empty" the-reply)
+    (begin 
+     (println "backup successful")
+     (println (join (list "backup took" (string time-taken) "ms") " "))
+     (println (join (list "uploaded" (string file-size) "bytes") " ")))
+    (begin 
+     (println "something went wrong with the upload:")
+     (println the-reply)
+     (exit 1)))
+(exit)
